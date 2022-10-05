@@ -1,139 +1,61 @@
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ArduinoOTA.h>
-#include <ESP8266mDNS.h>
-#include <Wire.h>
-#include <PubSubClient.h>
-#include "credentials.h"
-#include "common.h"
-#include "mqttClient.h"
-#include "compass.h"
-#include "laser.h"
-#include "motors.h"
-#include "batteries.h"
-#include "nunchuck.h"
+/*
+ Lego Powerfunctions car model controlled over bluetooth
+ Arduino Uno controls motors and servo
+ Remote controlled with android app developed with MIT App Inventor 2
+ 
+ Circuit:
+ * Serial communication   (uses Uno pin 0,1)    Bluetooth-module is attached (has to be detached when loading program over USB)
+ * L293D with motor       (uses Uno digital pins 2,5,9)
+ * L293D with servo       (uses Uno digital pins 6,8,3)
+ 
+ 
+*/
 
-void i2c_scanner();
+// Servo control digital output pins defined as global constants (Servo steering with 1 Lego servo):
+const int controlPin3A = 16;                  // L293D driver input 3A on pin no 10 connected to Arduino digital output pin 6
+const int controlPin4A = 17;                  // L293D driver input 4A on pin no 15 connected to Arduino digital output pin 8 
+const int servoENablePin = 23;                // L293D ENable(3,4) input on pin no 9 connected to Arduino digital output pin 3
 
-PubSubClient MQTTClient;
-MQTT mqtt;
-Battery battery;
-Motors motors;
-Nunchuck nunchuck;
-Laser laser;
-Compass compass;
+// Servo control global variables:
+int steering = 0;                            // Servo position 0..255
+int steeringDirection = 0;                   // Left (0) and Right (1)
 
-void setup()
+
+
+void setup() 
 {
-  Serial.begin(115200);
-  Serial.println("Starting");
+   Serial.begin(9600);                       // initialize serial communication
+   Serial.setTimeout(1000);                  // 1000 ms time out
+   // Declare digital output pins:
+   pinMode(controlPin3A, OUTPUT);      // 3A
+   pinMode(controlPin4A, OUTPUT);      // 4A
+   pinMode(servoENablePin, OUTPUT);    // EN3,4
 
-  Wire.begin();
-
-  setupWifi();
-  setupOTA();
-
-  //start MQTT
-  mqtt.Begin();
-
-  i2c_scanner();
-
-  //start laser beam
-  laser.Begin();
-
-  //start compass
-  compass.Begin();
-
-  //get battery reading
-  battery.Begin();
-
-  //get nunchuck ready
-  nunchuck.nunchuck_init();
-
-  //get motors ready
-  motors.Begin();
+   digitalWrite(servoENablePin, LOW);  // steering centered
 }
 
-void loop()
+
+void loop() 
 {
-  //make code smarter if it's not on the network it should still work
-  if (WiFi.isConnected() == true)
-  {
-    MDNS.update();
-    ArduinoOTA.handle();
-  }
-
-  MotorXY motorXY;
-  motorXY = mqtt.Loop();
-
-  if (motorXY.fromMQTT == false)
-  {
-    motorXY = nunchuck.Loop();
-  }
-
-  //go and get laser and compass values
-  int laserRangeMilliMeter = laser.Loop();
-  int medianCompassHeading = compass.Loop();
-  int motor_x = motorXY.motor_x;
-  int motor_y = motorXY.motor_y;
-
-  motors.setMapped(motor_x, motor_y, laserRangeMilliMeter); //, medianCompassHeading);
-
-  delay(50);
-}
-
-void i2c_scanner()
-{
-  yield();
-
-  byte error, address;
-  int nDevices;
-
-  Log("Scanning...");
-
-  nDevices = 0;
-  for (address = 1; address < 127; address++)
-  {
-    yield();
-
-    delay(5);
-
-    // The i2c scanner uses the return value of the Write.endTransmisstion to see if a device did acknowledge to the address.
-    Wire.beginTransmission(address);
-    error = Wire.endTransmission();
-
-    if (error == 0)
+  if (steeringDirection == 0)            //Left
     {
-      Log("I2C device found at address 0x");
-      if (address < 16)
-      {
-        Log("0");
-      }
-      Log(String(address));
-      Log(" !");
-
-      nDevices++;
+       digitalWrite(controlPin3A, HIGH);
+       digitalWrite(controlPin4A, LOW);
     }
-    else if (error == 4)
+  else                                   //Right
     {
-      Log("Unknown error at address 0x");
-      if (address < 16)
-      {
-        Log("0");
-      }
-      Log(String(address));
-    }
-  }
-  if (nDevices == 0)
-  {
-    Log("No I2C devices found\n");
-
-    delay(500);
-
-    ESP.restart();
-  }
-  else
-  {
-    Log("Done.\n");
-  }
+       digitalWrite(controlPin3A, LOW);
+       digitalWrite(controlPin4A, HIGH);
+    } 
+  analogWrite(servoENablePin, steering); //Servo position
 }
+
+/*
+L293 logic:              
+               EN3,4   3A    4A
+               H       H     L    Servo turns left  (steeringDirection == 0)
+               H       L     H    Servo turns right (steeringDirection == 1)
+
+Servo position:PWM signal on EN3,4 (490 Hz; digital output value 0..255 for position; 0 is straight ahead)
+*/
